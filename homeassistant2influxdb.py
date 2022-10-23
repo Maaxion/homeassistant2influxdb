@@ -10,6 +10,7 @@ import sys
 from tqdm import tqdm
 import voluptuous as vol
 import yaml
+from datetime import datetime
 
 sys.path.append("home-assistant-core")
 
@@ -211,7 +212,7 @@ def main():
                         event = Event(
                             _event_type,
                             data={"new_state": state},
-                            time_fired=_time_fired
+                            time_fired=datetime.strptime(_time_fired, "%Y-%m-%d %H:%M:%S.%f")
                         )
                     except InvalidEntityFormatError:
                         pass
@@ -253,7 +254,9 @@ def main():
     # Clean up by closing influx connection, and removing temporary table
     influx.close()
     if args.table == 'both':
-        remove_tmp_table()
+        cursor = connection.cursor()
+        remove_tmp_table(cursor)
+        cursor.close()
 
     # print statistics - ideally you have one friendly name per entity_id
     # you can use the output to see where the same sensor has had different
@@ -289,7 +292,7 @@ def formulate_sql_query(table: str, arg_tables: str):
     if table == "states":
         # Using two different SQL queries in a Union to support data made with older HA db schema:
         # https://github.com/home-assistant/core/pull/71165
-        sql_query = """select SQL_NO_CACHE states.entity_id,
+        sql_query = """select states.entity_id,
                               states.state,
                               states.attributes,
                               events.event_type as event_type,
@@ -314,7 +317,7 @@ def formulate_sql_query(table: str, arg_tables: str):
         else:
             inset_query = ''
         sql_query = f"""
-        SELECT SQL_NO_CACHE statistics_meta.statistic_id,
+        SELECT statistics_meta.statistic_id,
                statistics.mean,
                statistics.min,
                statistics.max,
@@ -342,7 +345,7 @@ def formulate_tmp_table_sql():
     TODO Not perfect solution, some entities have multiple attributes that change over time.
     TODO Here we select the most recent
     """
-    return """CREATE TEMPORARY TABLE IF NOT EXISTS state_tmp
+    return """CREATE TEMPORARY TABLE IF NOT EXISTS state_tmp AS
     SELECT max(states.attributes_id) as attributes_id, states.entity_id
     FROM states
     WHERE states.attributes_id IS NOT NULL
@@ -351,7 +354,7 @@ def formulate_tmp_table_sql():
 
 
 def remove_tmp_table(cursor):
-    cursor.execute("""DROP TEMPORARY TABLE state_tmp;""")
+    cursor.execute("""DROP TABLE IF EXISTS state_tmp;""")
 
 
 if __name__ == "__main__":
