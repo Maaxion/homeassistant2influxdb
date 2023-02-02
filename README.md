@@ -59,7 +59,7 @@ Setup:
 1. `sudo apt install python3 python3.7-dev`
 2. `git clone <this repository> migrate2influxdb`
 3. `cd migrate2influxdb`
-4. `git clone --depth=1 https://github.com:home-assistant/core.git home-assistant-core`
+4. `git clone --depth=1 https://github.com/home-assistant/core.git home-assistant-core`
 5. `python3 -m venv .venv`
 
 Dependency installation:
