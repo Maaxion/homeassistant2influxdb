@@ -8,7 +8,7 @@ Working with home assistant core-2022.7.6 and influx v2.3.0.
 
 Quality of the script is also disputable given that it is a one-off. Use of
 MySQL/MariaDB is hard-coded, but (untested) lines of code to work with the
-SQLite dtabase are included (search for SQLite).
+SQLite database are included (search for SQLite).
 
 Use at your own risk. (Backups recommended)
 
