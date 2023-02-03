@@ -209,11 +209,18 @@ def main():
                             entity_id=_entity_id,
                             state=_state,
                             attributes=_attributes)
-                        event = Event(
-                            _event_type,
-                            data={"new_state": state},
-                            time_fired=datetime.strptime(_time_fired, "%Y-%m-%d %H:%M:%S.%f")
-                        )
+                        if args.type == "MySQL" or args.type == "MariaDB":
+                            event = Event(
+                                _event_type,
+                                data={"new_state": state},
+                                time_fired=_time_fired
+                            )
+                        else:
+                            event = Event(
+                                _event_type,
+                                data={"new_state": state},
+                                time_fired=datetime.strptime(_time_fired, "%Y-%m-%d %H:%M:%S.%f")
+                            )
                     except InvalidEntityFormatError:
                         pass
                     else:
