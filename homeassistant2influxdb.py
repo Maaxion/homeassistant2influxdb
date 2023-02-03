@@ -186,7 +186,10 @@ def main():
                             _entity_id = rename_entity_id(row[0])
                             _state = row[1]
                             _attributes_raw = row[2]
-                            _attributes = rename_friendly_name(json.loads(_attributes_raw))
+                            if _attributes_raw is None:
+                                _attributes = None
+                            else:
+                                _attributes = rename_friendly_name(json.loads(_attributes_raw))
                             _event_type = row[3]
                             _time_fired = row[4]
                         elif table == "statistics":
