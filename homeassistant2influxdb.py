@@ -5,6 +5,7 @@ import argparse
 from homeassistant.core import Event, State
 from homeassistant.components.influxdb import get_influx_connection, _generate_event_to_json, INFLUX_SCHEMA
 from homeassistant.exceptions import InvalidEntityFormatError
+from datetime import datetime
 import json
 import sys
 from tqdm import tqdm
@@ -202,6 +203,10 @@ def main():
                         print("Failed extracting data from %s: %s.\nAttributes: %s" % (row, e, _attributes_raw))
                         continue
 
+                    # convert string to datetime to avoid the error:
+                    # AttributeError: 'str' object has no attribute 'toordinal'
+                    _time_fired = datetime.strptime(_time_fired, '%Y-%m-%d %H:%M:%S.%f')
+
                     try:
                         # recreate state and event
                         state = State(
@@ -246,14 +251,17 @@ def main():
                 print(f"MySQL error on row {row_counter}: {mysql_error}")
                 continue
             progress_bar.close()
+
+            # remove temporary table (if needed)
+            if args.type != 'SQLite' and args.table == 'both':
+                remove_tmp_table(cursor)
+
             cursor.close()
 
     if not args.dry:
         influx.write(influx_batch_json)
-    # Clean up by closing influx connection, and removing temporary table
+    # Clean up by closing influx connection
     influx.close()
-    if args.table == 'both':
-        remove_tmp_table()
 
     # print statistics - ideally you have one friendly name per entity_id
     # you can use the output to see where the same sensor has had different
@@ -289,7 +297,7 @@ def formulate_sql_query(table: str, arg_tables: str):
     if table == "states":
         # Using two different SQL queries in a Union to support data made with older HA db schema:
         # https://github.com/home-assistant/core/pull/71165
-        sql_query = """select SQL_NO_CACHE states.entity_id,
+        sql_query = """select states.entity_id,
                               states.state,
                               states.attributes,
                               events.event_type as event_type,
@@ -314,7 +322,7 @@ def formulate_sql_query(table: str, arg_tables: str):
         else:
             inset_query = ''
         sql_query = f"""
-        SELECT SQL_NO_CACHE statistics_meta.statistic_id,
+        SELECT statistics_meta.statistic_id,
                statistics.mean,
                statistics.min,
                statistics.max,
@@ -343,7 +351,7 @@ def formulate_tmp_table_sql():
     TODO Here we select the most recent
     """
     return """CREATE TEMPORARY TABLE IF NOT EXISTS state_tmp
-    SELECT max(states.attributes_id) as attributes_id, states.entity_id
+    AS SELECT max(states.attributes_id) as attributes_id, states.entity_id
     FROM states
     WHERE states.attributes_id IS NOT NULL
     GROUP BY states.entity_id;
