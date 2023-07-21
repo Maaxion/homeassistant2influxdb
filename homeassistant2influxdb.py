@@ -289,23 +289,26 @@ def formulate_sql_query(table: str, arg_tables: str):
     if table == "states":
         # Using two different SQL queries in a Union to support data made with older HA db schema:
         # https://github.com/home-assistant/core/pull/71165
-        sql_query = """select SQL_NO_CACHE states.entity_id,
+        sql_query = f"""select SQL_NO_CACHE states_meta.entity_id,
                               states.state,
                               states.attributes,
                               events.event_type as event_type,
-                              events.time_fired as time_fired
+                              FROM_UNIXTIME(states.last_updated_ts) as time_fired
                        from states,
-                            events
-                       where events.event_id = states.event_id
+                            events,
+                            states_meta
+                       where events.event_id = states.event_id and states_meta.metadata_id = states.metadata_id and states.attributes is not null
                        UNION
-                       select states.entity_id,
+                       select states_meta.entity_id,
                               states.state,
                               state_attributes.shared_attrs as attributes,
                               'state_changed',
-                              states.last_updated as time_fired
-                       from states, state_attributes
+                              FROM_UNIXTIME(states.last_updated_ts) as time_fired
+                       from states, state_attributes, states_meta
                        where event_id is null
-                        and states.attributes_id = state_attributes.attributes_id;"""
+                        and states.attributes_id = state_attributes.attributes_id
+                        and states_meta.metadata_id = states.metadata_id
+                        and state_attributes.shared_attrs is not null"""
     elif table == "statistics":
         if arg_tables == 'both':
             # If we're adding both, we should not add statistics for the same time period we're adding events
@@ -320,7 +323,7 @@ def formulate_sql_query(table: str, arg_tables: str):
                statistics.max,
                state_attributes.shared_attrs,
                'state_changed',
-               statistics.start
+               {"datetime(statistics.start_ts, 'unixepoch', 'localtime')" if is_mysql else "FROM_UNIXTIME(statistics.start_ts)"} as time_fired
         FROM statistics_meta,
              statistics,
              state_attributes
