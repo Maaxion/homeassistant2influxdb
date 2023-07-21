@@ -221,7 +221,7 @@ def main():
                             continue
 
                         # collect statistics (remove this code block to speed up processing slightly)
-                        if "friendly_name" in _attributes:
+                        if _attributes is not None and "friendly_name" in _attributes:
                             friendly_name = _attributes["friendly_name"]
 
                             if _entity_id not in statistics:
