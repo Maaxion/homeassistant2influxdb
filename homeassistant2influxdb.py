@@ -124,7 +124,8 @@ def main():
     influx = get_influx_connection(influx_config, test_write=True, test_read=True)
     converter = _generate_event_to_json(influx_config)
 
-    if args.type == "MySQL" or args.type == "MariaDB":
+    is_mysql = args.type == "MySQL" or args.type == "MariaDB"
+    if is_mysql:
         # connect to MySQL/MariaDB database
         connection = mysql_connect(host=args.host,
                                    user=args.user,
@@ -168,7 +169,7 @@ def main():
         # map to count names and number of measurements for each entity
         statistics = {}
         # Execute correct query for table
-        sql_query = formulate_sql_query(table, args.table)
+        sql_query = formulate_sql_query(table, args.table, is_mysql)
         cursor = connection.cursor()
         cursor.execute(sql_query)
 
@@ -281,7 +282,7 @@ def get_tables(table_key: str) -> list:
         print("ERROR: argument --table should be \"states\" or \"statistics\"")
 
 
-def formulate_sql_query(table: str, arg_tables: str):
+def formulate_sql_query(table: str, arg_tables: str, is_mysql: bool):
     """
     Retrieves data from the HA databse
     """
@@ -293,7 +294,7 @@ def formulate_sql_query(table: str, arg_tables: str):
                               states.state,
                               states.attributes,
                               events.event_type as event_type,
-                              FROM_UNIXTIME(states.last_updated_ts) as time_fired
+                              {"FROM_UNIXTIME(states.last_updated_ts)" if is_mysql else "datetime(states.last_updated_ts, 'unixepoch', 'localtime')"} as time_fired
                        from states,
                             events,
                             states_meta
@@ -303,7 +304,7 @@ def formulate_sql_query(table: str, arg_tables: str):
                               states.state,
                               state_attributes.shared_attrs as attributes,
                               'state_changed',
-                              FROM_UNIXTIME(states.last_updated_ts) as time_fired
+                              {"datetime(states.last_updated_ts, 'unixepoch', 'localtime')" if is_mysql else "FROM_UNIXTIME(states.last_updated_ts)"} as time_fired
                        from states, state_attributes, states_meta
                        where event_id is null
                         and states.attributes_id = state_attributes.attributes_id
