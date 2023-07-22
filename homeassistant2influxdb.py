@@ -124,7 +124,8 @@ def main():
     influx = get_influx_connection(influx_config, test_write=True, test_read=True)
     converter = _generate_event_to_json(influx_config)
 
-    if args.type == "MySQL" or args.type == "MariaDB":
+    is_mysql = args.type == "MySQL" or args.type == "MariaDB"
+    if is_mysql:
         # connect to MySQL/MariaDB database
         connection = mysql_connect(host=args.host,
                                    user=args.user,
@@ -168,7 +169,7 @@ def main():
         # map to count names and number of measurements for each entity
         statistics = {}
         # Execute correct query for table
-        sql_query = formulate_sql_query(table, args.table)
+        sql_query = formulate_sql_query(table, args.table, is_mysql)
         cursor = connection.cursor()
         cursor.execute(sql_query)
 
@@ -221,7 +222,7 @@ def main():
                             continue
 
                         # collect statistics (remove this code block to speed up processing slightly)
-                        if "friendly_name" in _attributes:
+                        if _attributes is not None and "friendly_name" in _attributes:
                             friendly_name = _attributes["friendly_name"]
 
                             if _entity_id not in statistics:
@@ -281,7 +282,7 @@ def get_tables(table_key: str) -> list:
         print("ERROR: argument --table should be \"states\" or \"statistics\"")
 
 
-def formulate_sql_query(table: str, arg_tables: str):
+def formulate_sql_query(table: str, arg_tables: str, is_mysql: bool):
     """
     Retrieves data from the HA databse
     """
@@ -289,23 +290,26 @@ def formulate_sql_query(table: str, arg_tables: str):
     if table == "states":
         # Using two different SQL queries in a Union to support data made with older HA db schema:
         # https://github.com/home-assistant/core/pull/71165
-        sql_query = """select SQL_NO_CACHE states.entity_id,
+        sql_query = f"""select SQL_NO_CACHE states_meta.entity_id,
                               states.state,
                               states.attributes,
                               events.event_type as event_type,
-                              events.time_fired as time_fired
+                              {"FROM_UNIXTIME(states.last_updated_ts)" if is_mysql else "datetime(states.last_updated_ts, 'unixepoch', 'localtime')"} as time_fired
                        from states,
-                            events
-                       where events.event_id = states.event_id
+                            events,
+                            states_meta
+                       where events.event_id = states.event_id and states_meta.metadata_id = states.metadata_id and states.attributes is not null
                        UNION
-                       select states.entity_id,
+                       select states_meta.entity_id,
                               states.state,
                               state_attributes.shared_attrs as attributes,
                               'state_changed',
-                              states.last_updated as time_fired
-                       from states, state_attributes
+                              {"datetime(states.last_updated_ts, 'unixepoch', 'localtime')" if is_mysql else "FROM_UNIXTIME(states.last_updated_ts)"} as time_fired
+                       from states, state_attributes, states_meta
                        where event_id is null
-                        and states.attributes_id = state_attributes.attributes_id;"""
+                        and states.attributes_id = state_attributes.attributes_id
+                        and states_meta.metadata_id = states.metadata_id
+                        and state_attributes.shared_attrs is not null"""
     elif table == "statistics":
         if arg_tables == 'both':
             # If we're adding both, we should not add statistics for the same time period we're adding events
@@ -320,7 +324,7 @@ def formulate_sql_query(table: str, arg_tables: str):
                statistics.max,
                state_attributes.shared_attrs,
                'state_changed',
-               statistics.start
+               {"datetime(statistics.start_ts, 'unixepoch', 'localtime')" if is_mysql else "FROM_UNIXTIME(statistics.start_ts)"} as time_fired
         FROM statistics_meta,
              statistics,
              state_attributes
