@@ -253,8 +253,10 @@ def main():
         influx.write(influx_batch_json)
     # Clean up by closing influx connection, and removing temporary table
     influx.close()
-    if args.table == 'both':
-        remove_tmp_table()
+    if 'statistics' in tables:
+        cursor = connection.cursor()
+        remove_tmp_table(cursor)
+        cursor.close()
 
     # print statistics - ideally you have one friendly name per entity_id
     # you can use the output to see where the same sensor has had different
@@ -304,7 +306,7 @@ def formulate_sql_query(table: str, arg_tables: str, is_mysql: bool):
                               states.state,
                               state_attributes.shared_attrs as attributes,
                               'state_changed',
-                              {"datetime(states.last_updated_ts, 'unixepoch', 'localtime')" if is_mysql else "FROM_UNIXTIME(states.last_updated_ts)"} as time_fired
+                              {"FROM_UNIXTIME(states.last_updated_ts)" if is_mysql else "datetime(states.last_updated_ts, 'unixepoch', 'localtime')"} as time_fired
                        from states, state_attributes, states_meta
                        where event_id is null
                         and states.attributes_id = state_attributes.attributes_id
@@ -324,7 +326,7 @@ def formulate_sql_query(table: str, arg_tables: str, is_mysql: bool):
                statistics.max,
                state_attributes.shared_attrs,
                'state_changed',
-               {"datetime(statistics.start_ts, 'unixepoch', 'localtime')" if is_mysql else "FROM_UNIXTIME(statistics.start_ts)"} as time_fired
+               {"FROM_UNIXTIME(statistics.start_ts)" if is_mysql else "datetime(statistics.start_ts, 'unixepoch', 'localtime')"} as time_fired
         FROM statistics_meta,
              statistics,
              state_attributes
