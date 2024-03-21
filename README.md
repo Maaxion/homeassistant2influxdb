@@ -10,6 +10,9 @@ Quality of the script is also disputable given that it is a one-off. Use of
 MySQL/MariaDB is hard-coded, but (untested) lines of code to work with the
 SQLite dtabase are included (search for SQLite).
 
+The script will most probably not run out of the box.
+Please use it as a working base to create your own version.
+
 Use at your own risk. (Backups recommended)
 
 ## Introduction

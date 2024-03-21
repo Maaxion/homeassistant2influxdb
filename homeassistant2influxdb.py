@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import argparse
+from datetime import datetime
 from homeassistant.core import Event, State
 from homeassistant.components.influxdb import get_influx_connection, _generate_event_to_json, INFLUX_SCHEMA
 from homeassistant.exceptions import InvalidEntityFormatError
@@ -138,7 +139,7 @@ def main():
 
     # Create list tables that we are going to retrieve from HA
     tables = get_tables(args.table)
-    print(f"Migrating home assistant database {', '.join(tables)} to Influx database {args.database} and " +
+    print(f"Migrating home assistant database (tables {', '.join(tables)}) to Influx database {args.database} and " +
           f"bucket {influx_config.get('bucket')}")
     # write to influxdb in batches
     influx_batch_size_max = 1024
@@ -149,6 +150,7 @@ def main():
         cursor = connection.cursor()
         tmp_table_query = formulate_tmp_table_sql()
         cursor.execute(tmp_table_query)
+        print(tmp_table_query)
         cursor.close()
 
     # select the values we are interested in
@@ -170,10 +172,11 @@ def main():
         # Execute correct query for table
         sql_query = formulate_sql_query(table, args.table)
         cursor = connection.cursor()
+        print(sql_query)
         cursor.execute(sql_query)
 
         # Loop over each data row
-        print(f"    Processing rows from table {table} and writing to InfluxDB.")
+        print(f"    Processing max. {total} rows from table {table} and writing to InfluxDB.")
         with tqdm(total=total, mininterval=1, maxinterval=5, unit=" rows", unit_scale=True, leave=False) as progress_bar:
             try:
                 row_counter = 0
@@ -187,7 +190,7 @@ def main():
                             _attributes_raw = row[2]
                             _attributes = rename_friendly_name(json.loads(_attributes_raw))
                             _event_type = row[3]
-                            _time_fired = row[4]
+                            _time_fired = datetime.fromtimestamp(row[4])
                         elif table == "statistics":
                             _entity_id = rename_entity_id(row[0])
                             _state = row[1]
@@ -197,7 +200,7 @@ def main():
                             _attributes_raw = row[4]
                             _attributes = create_statistics_attributes(_mean, _min, _max, json.loads(_attributes_raw))
                             _event_type = row[5]
-                            _time_fired = row[6]
+                            _time_fired = datetime.fromtimestamp(row[6])
                     except Exception as e:
                         print("Failed extracting data from %s: %s.\nAttributes: %s" % (row, e, _attributes_raw))
                         continue
@@ -217,8 +220,12 @@ def main():
                         pass
                     else:
                         data = converter(event)
-                        if not data:
+                        if not data and _state not in ("unavailable", "unknown", "off", "on", "home", "not_home"): # skipping these states is ok
+                            print(f"skipping {_entity_id} with state {_state} at {_time_fired}.")
                             continue
+                        
+                        if row_counter < 10:
+                            print(f"Example: inserting {_entity_id} with state {_state} at {_time_fired}, attributes={_attributes}.")
 
                         # collect statistics (remove this code block to speed up processing slightly)
                         if "friendly_name" in _attributes:
@@ -253,7 +260,7 @@ def main():
     # Clean up by closing influx connection, and removing temporary table
     influx.close()
     if args.table == 'both':
-        remove_tmp_table()
+        remove_tmp_table(cursor)
 
     # print statistics - ideally you have one friendly name per entity_id
     # you can use the output to see where the same sensor has had different
@@ -289,38 +296,32 @@ def formulate_sql_query(table: str, arg_tables: str):
     if table == "states":
         # Using two different SQL queries in a Union to support data made with older HA db schema:
         # https://github.com/home-assistant/core/pull/71165
-        sql_query = """select SQL_NO_CACHE states.entity_id,
-                              states.state,
-                              states.attributes,
-                              events.event_type as event_type,
-                              events.time_fired as time_fired
-                       from states,
-                            events
-                       where events.event_id = states.event_id
-                       UNION
-                       select states.entity_id,
+        sql_query = """select states_meta.entity_id,
                               states.state,
                               state_attributes.shared_attrs as attributes,
                               'state_changed',
-                              states.last_updated as time_fired
-                       from states, state_attributes
+                              states.last_updated_ts as time_fired
+                       from states, state_attributes, states_meta
                        where event_id is null
-                        and states.attributes_id = state_attributes.attributes_id;"""
+                        and states.attributes_id = state_attributes.attributes_id
+                        and states.metadata_id = states_meta.metadata_id;
+                        """
     elif table == "statistics":
         if arg_tables == 'both':
             # If we're adding both, we should not add statistics for the same time period we're adding events
             inset_query = f"{sql_query}" + \
                 f"\n         AND statistics.start < (select min(events.time_fired) as datetetime_start from events)"
         else:
-            inset_query = ''
+            inset_query = "\n         AND statistics.start_ts < 1708837680"
+            # start 25.2. 6:10 MEZ = 1708837680
         sql_query = f"""
-        SELECT SQL_NO_CACHE statistics_meta.statistic_id,
+        SELECT statistics_meta.statistic_id,
                statistics.mean,
                statistics.min,
                statistics.max,
                state_attributes.shared_attrs,
                'state_changed',
-               statistics.start
+               statistics.start_ts
         FROM statistics_meta,
              statistics,
              state_attributes
@@ -342,16 +343,20 @@ def formulate_tmp_table_sql():
     TODO Not perfect solution, some entities have multiple attributes that change over time.
     TODO Here we select the most recent
     """
-    return """CREATE TEMPORARY TABLE IF NOT EXISTS state_tmp
-    SELECT max(states.attributes_id) as attributes_id, states.entity_id
-    FROM states
-    WHERE states.attributes_id IS NOT NULL
-    GROUP BY states.entity_id;
+    return """CREATE TABLE IF NOT EXISTS state_tmp AS
+    SELECT max(states.attributes_id) as attributes_id, states_meta.entity_id
+    FROM states, states_meta
+    WHERE states.metadata_id = states_meta.metadata_id
+      AND states.attributes_id IS NOT NULL
+    GROUP BY states_meta.entity_id;
     """
 
 
 def remove_tmp_table(cursor):
-    cursor.execute("""DROP TEMPORARY TABLE state_tmp;""")
+    try:
+        cursor.execute("""DROP TABLE state_tmp;""")
+    except Exception as e:
+        print("Error during drop", e)
 
 
 if __name__ == "__main__":
